@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>J.A.R.V.I.S</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/marked@18.0.7/lib/marked.umd.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.4.12/dist/purify.min.js"></script>
+<!-- <link rel="stylesheet" href="jarvis-hud.css"> -->
+<link rel="stylesheet" href="/static/jarvis-hud.css">
+</head>
+<body>
+
+<!-- ============ BOOT OVERLAY ============ -->
+<div id="boot">
+  <div id="scanline"></div>
+  <div class="dot"></div>
+  <div id="boot-word">J.A.R.V.I.S</div>
+  <div id="boot-sub">SYSTEM ONLINE</div>
+  <div id="loading-bar-container">
+    <div id="loading-bar"></div>
+  </div>
+  <div id="loading-percentage">INITIALIZING...</div>
+</div>
+
+<div id="mic-note"></div>
+
+<!-- ============ STAGE ============ -->
+<div id="stage">
+  <div id="hud">
+    <!-- Rotating rings -->
+    <div class="hud-ring ring-outer"></div>
+    <div class="hud-ring ring-2"></div>
+    <div class="hud-ring ring-3"></div>
+    <div class="hud-ring ring-4"></div>
+    <div class="hud-ring ring-5"></div>
+    
+    <!-- Center core -->
+    <div id="core-glow"></div>
+    
+    <!-- Audio visualizer bars -->
+    <div id="bar-ring"></div>
+    
+    <!-- Center label -->
+    <div id="center-label">
+      <div id="center-word">J.A.R.V.I.S</div>
+      <div id="center-status">IDLE</div>
+    </div>
+  </div>
+  
+  <div id="news-layer"></div>
+</div>
+
+<!-- ============ CHAT PANEL ============ -->
+<div id="chat-panel">
+  <div id="chat-log"></div>
+  <form id="chat-form">
+    <input id="chat-input" type="text" placeholder="Ask JARVIS anything..." autocomplete="off" />
+    <button id="chat-send" type="submit">SEND</button>
+  </form>
+</div>
+
+<!-- ============ CONTROLS ============ -->
+<div id="controls">
+  <button class="btn" id="listen-btn">Listen</button>
+  <button class="btn btn-amber" id="speak-btn">Simulate Reply</button>
+</div>
+
+<!-- <script src="jarvis-hud.js"></script> -->
+<script src="/static/jarvis-hud.js"></script>
+</body>
+</html>
