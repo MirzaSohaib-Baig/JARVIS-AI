@@ -23,13 +23,18 @@ class Settings:
     SITE_URL = getenv("SITE_URL", "http://127.0.0.1:8000")
     SITE_NAME = getenv("SITE_NAME", "JARVIS")
     SCOPES = [
+    #// Gmail API scopes
     "https://www.googleapis.com/auth/gmail.send",
     "https://www.googleapis.com/auth/gmail.readonly",
+
+    #// Calendar API scopes
+    "https://www.googleapis.com/auth/calendar.events",
 ]
 
     # Gmail & calendar setup instructions: https://developers.google.com/gmail/api/quickstart/python
-    TOKEN_PATH = "secrets/token.json"
+    TOKEN_PATH = getenv("GOOGLE_TOKEN_PATH", "secrets/token.json")
     CREDENTIALS_PATH = getenv("GOOGLE_CREDENTIALS_PATH", "secrets/credentials.json")
+    DEFAULT_TIMEZONE = getenv("JARVIS_TIMEZONE", "UTC")
 
     # News sources for the news tool.
     RSS_FEEDS = {

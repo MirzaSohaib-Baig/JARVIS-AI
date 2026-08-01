@@ -143,6 +143,7 @@ class MainPage(QWebEnginePage):
     def __init__(self, profile, parent=None):
         super().__init__(profile, parent)
         self.settings().setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanOpenWindows, True)
+        self.settings().setAttribute(QWebEngineSettings.WebAttribute.PlaybackRequiresUserGesture, False)  # Disable JS popups for the main page
         self._children: list[NewsWindow] = []  # keeps references alive
 
     def createWindow(self, _window_type):

@@ -4,7 +4,7 @@ from fastapi import FastAPI
 import uvicorn
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
+# from fastapi.middleware.cors import CORSMiddleware
 from schema.chatSchema import ChatRequest, ChatResponse
 from brain.orchestrator import handle_message
 
@@ -12,13 +12,13 @@ import html as _html
 
 app = FastAPI(title="JARVIS")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=["*"],
+#     allow_credentials=True,
+#     allow_methods=["*"],
+#     allow_headers=["*"],
+# )
 
 HUD_PATH = Path(__file__).parent /"hud"
 

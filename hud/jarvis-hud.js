@@ -1,4 +1,93 @@
 (function(){
+  // ---------- Synthesized sound effects (Web Audio API, no audio files) ----------
+  // Everything here is generated on the fly with oscillators — no copyrighted
+  // movie audio, no asset files to ship, same philosophy as the SVG rings.
+  const SFX = (function(){
+    let ctx = null;
+    let masterGain = null;
+    let muted = false;
+    const STORAGE_KEY = 'jarvis-sfx-muted';
+
+    try{ muted = localStorage.getItem(STORAGE_KEY) === '1'; }catch(e){ /* ignore */ }
+
+    function ensureCtx(){
+      if(!ctx){
+        ctx = new (window.AudioContext || window.webkitAudioContext)();
+        masterGain = ctx.createGain();
+        masterGain.gain.value = 0.22;
+        masterGain.connect(ctx.destination);
+      }
+      if(ctx.state === 'suspended'){ ctx.resume(); }
+      return ctx;
+    }
+
+    function tone(freq, duration, opts){
+      opts = opts || {};
+      if(muted) return;
+      const c = ensureCtx();
+      const t0 = c.currentTime + (opts.delay || 0);
+      const osc = c.createOscillator();
+      const gain = c.createGain();
+      osc.type = opts.type || 'sine';
+      osc.frequency.setValueAtTime(freq, t0);
+      gain.gain.setValueAtTime(opts.startGain || 0.2, t0);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+      osc.connect(gain); gain.connect(masterGain);
+      osc.start(t0); osc.stop(t0 + duration + 0.02);
+    }
+
+    function sweep(startFreq, endFreq, duration, opts){
+      opts = opts || {};
+      if(muted) return;
+      const c = ensureCtx();
+      const t0 = c.currentTime + (opts.delay || 0);
+      const osc = c.createOscillator();
+      const gain = c.createGain();
+      osc.type = opts.type || 'sine';
+      osc.frequency.setValueAtTime(startFreq, t0);
+      osc.frequency.exponentialRampToValueAtTime(endFreq, t0 + duration);
+      gain.gain.setValueAtTime(opts.startGain || 0.2, t0);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+      osc.connect(gain); gain.connect(masterGain);
+      osc.start(t0); osc.stop(t0 + duration + 0.02);
+    }
+
+    return {
+      bootUp(){
+        sweep(120, 720, 1.1, {type:'sawtooth', startGain:0.1});
+        tone(880, 0.12, {delay:1.15, startGain:0.16});
+        tone(1320, 0.18, {delay:1.28, startGain:0.14});
+      },
+      click(){ tone(720, 0.06, {type:'square', startGain:0.12}); },
+      send(){ sweep(500, 900, 0.15, {startGain:0.14}); },
+      receive(){
+        tone(660, 0.09, {startGain:0.14});
+        tone(990, 0.12, {delay:0.08, startGain:0.12});
+      },
+      listenStart(){ sweep(300, 700, 0.2, {startGain:0.13}); },
+      listenStop(){ sweep(700, 300, 0.15, {startGain:0.1}); },
+      cardOpen(delay){ sweep(400, 1000, 0.12, {type:'triangle', startGain:0.09, delay: delay || 0}); },
+      unlock(){ ensureCtx(); },
+      toggleMute(){
+        muted = !muted;
+        try{ localStorage.setItem(STORAGE_KEY, muted ? '1' : '0'); }catch(e){ /* ignore */ }
+        return muted;
+      },
+      isMuted(){ return muted; }
+    };
+  })();
+
+  // Autoplay policy: a browser tab won't let audio play until you've
+  // interacted with the page at least once. The boot chime still tries to
+  // play immediately (works right away in the PyQt desktop shell, and in a
+  // browser tab if audio was already unlocked earlier this session) — this
+  // listener is the fallback that unlocks it on your very first click if
+  // that initial attempt got silently blocked.
+  document.addEventListener('pointerdown', function unlockAudioOnce(){
+    SFX.unlock();
+    document.removeEventListener('pointerdown', unlockAudioOnce);
+  }, { once: true });
+
   const boot = document.getElementById('boot');
   const hud = document.getElementById('hud');
   const stage = document.getElementById('stage');
@@ -15,6 +104,19 @@
   const chatSend = document.getElementById('chat-send');
   const newsLayer = document.getElementById('news-layer');
   const loadingPercentage = document.getElementById('loading-percentage');
+  const muteBtn = document.getElementById('mute-btn');
+
+  function refreshMuteBtn(){
+    const isMuted = SFX.isMuted();
+    muteBtn.textContent = isMuted ? '🔇' : '🔊';
+    muteBtn.classList.toggle('muted', isMuted);
+  }
+  refreshMuteBtn();
+  muteBtn.addEventListener('click', ()=>{
+    SFX.toggleMute();
+    refreshMuteBtn();
+    if(!SFX.isMuted()) SFX.click();
+  });
 
   // Create floating particles
   for (let i = 0; i < 30; i++) {
@@ -43,6 +145,7 @@
   requestAnimationFrame(()=>{
     boot.classList.add('scan');
     boot.classList.add('loading');
+    SFX.bootUp();
     
     // Update loading text
     const loadInterval = setInterval(() => {
@@ -67,6 +170,7 @@
       boot.classList.add('hide');
       controls.classList.add('visible');
       chatPanel.classList.add('visible');
+      muteBtn.classList.add('visible');
     }, 2400);
   });
 
@@ -108,6 +212,7 @@
 
   async function startListening(){
     if(mode === 'listening'){ stopListening(); return; }
+    SFX.listenStart();
     stopSpeakingSim();
     try{
       micStream = await navigator.mediaDevices.getUserMedia({audio:true});
@@ -150,6 +255,7 @@
   }
 
   function stopListening(){
+    if(mode === 'listening'){ SFX.listenStop(); }
     if(micRAF) cancelAnimationFrame(micRAF);
     if(simInterval) clearInterval(simInterval);
     if(micStream) micStream.getTracks().forEach(t=>t.stop());
@@ -184,8 +290,9 @@
     if(mode === 'speaking') setMode('idle');
   }
 
-  listenBtn.addEventListener('click', startListening);
+  listenBtn.addEventListener('click', ()=>{ SFX.click(); startListening(); });
   speakBtn.addEventListener('click', ()=>{
+    SFX.click();
     if(mode === 'speaking'){ stopSpeakingSim(); return; }
     playSpeakingAnimation(4200);
   });
@@ -242,6 +349,7 @@
   }
 
   async function sendToJarvis(message){
+    SFX.send();
     appendMessage('user', message);
     chatInput.value = '';
     chatInput.disabled = true;
@@ -258,6 +366,7 @@
       const data = await res.json();
 
       pending.remove();
+      SFX.receive();
       typeAndRenderMessage('assistant', data.reply);
       conversationHistory = data.history;
 
@@ -282,6 +391,7 @@
 
   function spawnNewsCards(cards){
     const subset = cards.slice(0, MAX_CARDS);
+    subset.forEach((_, i)=> SFX.cardOpen(i * 0.08));
     if(window.__TAURI__){
       spawnNewsWindows(subset);
     }else{
@@ -298,7 +408,7 @@
 
     cards.forEach((card, i)=>{
       const params = new URLSearchParams({
-        title: card.title, source: card.source, body: card.body, url: card.url, image: card.image
+        title: card.title, source: card.source, body: card.body, url: card.url, image: card.image, delay: i * 120
       });
       const x = mainPos.x + mainSize.width * 0.15 + i * 40 + (i % 2 === 0 ? -60 : 260);
       const y = mainPos.y + 80 + i * 70;
@@ -324,7 +434,7 @@
 
     cards.forEach((card, i)=>{
       const params = new URLSearchParams({
-        title: card.title, source: card.source, body: card.body, url: card.url, image: card.image
+        title: card.title, source: card.source, body: card.body, url: card.url, image: card.image, delay: i * 120
       });
       
       const GAP = 20;
