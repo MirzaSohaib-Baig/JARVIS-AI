@@ -11,6 +11,8 @@ you just register them here, nothing else changes.
 import json
 import re
 import traceback
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from openai import OpenAI
 from tools import news, gmail_tool, calendar_tool
 from config.settings import settings
@@ -24,13 +26,6 @@ client = OpenAI(
         "X-OpenRouter-Title": settings.SITE_NAME,
     }
     )
-
-SYSTEM_PROMPT = """You are a personal assistant in the style of JARVIS from Iron Man:
-concise, capable, and a little dry-witted. You have tools for news/tech trends,
-email, and (soon) home automation and phone control. Use a tool whenever the
-user's request needs live data or an action — don't guess at news or send
-emails from memory. Keep replies short and conversational, this is a chat, not
-a report."""
 
 # Combine every tool module's definitions + functions into one registry.
 # Add new tool modules here as you build them (calendar_tool, home_assistant_tool, etc.)
@@ -141,35 +136,16 @@ def _run_tool(func_name: str, func_args: dict, news_cards: list[dict]):
         print()
         return f"Error running {func_name}: {e}"
 
-
-def handle_message(user_message: str, history: list[dict] | None = None,
-                    session_id: str | None = None) -> dict:
+MAX_TOOL_ROUNDS = 4
+ 
+def _run_tool_round(message, messages: list[dict], news_cards: list[dict], called_tool_names: set[str]) -> bool:
     """
-    Takes a user message (+ optional prior conversation history), runs the
-    tool-calling loop, and returns {"reply": str, "cards": list[dict]}.
-
-    "cards" is only populated when a news tool was called — it's the
-    structured article data (title/source/body/url per item) so a frontend
-    can render actual visual panels/windows instead of dumping headlines as
-    a wall of text. Callers that only want text (like telegram_bot.py) just
-    read result["reply"].
-
-    session_id groups related requests together on OpenRouter's side (e.g.
-    per browser tab / per Telegram chat) — pass the same value across a
-    conversation if you want that grouping; safe to omit entirely.
+    Executes every tool call in one model response (structured or the
+    text-based fallback format), appending results into `messages` in
+    place. Returns True if any tool was actually called this round, False
+    if the model gave a plain answer with nothing left to do.
     """
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    if history:
-        messages.extend(history)
-    messages.append({"role": "user", "content": user_message})
-
-    data = _complete(messages, session_id=session_id, use_tools=True)
-    message = data.choices[0].message
-    news_cards: list[dict] = []
-    called_tool_names: set[str] = set()
-
     if message.tool_calls:
-        # Normal path: the model used real structured tool calling.
         messages.append(message)
         for tool_call in message.tool_calls:
             func_name = tool_call.function.name
@@ -184,16 +160,10 @@ def handle_message(user_message: str, history: list[dict] | None = None,
                     "content": json.dumps(result, default=str),
                 }
             )
-    else:
-        # Fallback path: check whether the model tried to call a tool using
-        # the text-based <tool_call> format instead of the structured API.
-        text_calls = _parse_text_tool_calls(message.content or "")
-        if not text_calls:
-            return {"reply": message.content, "cards": []}
-
-        # Don't echo the raw <tool_call> text back into history — replace it
-        # with a clean note, then feed tool results in as plain context
-        # (no tool_call_id thread to maintain here since none was ever created).
+        return True
+ 
+    text_calls = _parse_text_tool_calls(message.content or "")
+    if text_calls:
         messages.append({"role": "assistant", "content": "Looking that up now."})
         result_lines = []
         for call in text_calls:
@@ -201,24 +171,83 @@ def handle_message(user_message: str, history: list[dict] | None = None,
             result = _run_tool(call["name"], call["arguments"], news_cards)
             result_lines.append(f"{call['name']} result: {json.dumps(result, default=str)}")
         messages.append({"role": "system", "content": "Tool results:\n" + "\n".join(result_lines)})
+        return True
+ 
+    return False
 
-    # Speed optimization: if this turn ONLY called news tools, skip the
-    # second model round-trip entirely and build the spoken acknowledgment
-    # locally. The two model calls (pick a tool -> narrate the result) were
-    # each costing a full network + inference round-trip; for a pure news
-    # request the narration adds no information the cards/windows don't
-    # already carry, so cutting it roughly halves the time until windows
-    # actually open. Mixed turns (news + email, etc.) still go through the
-    # real second call below, since those genuinely need the model to
-    # describe the non-news action it took.
-    if news_cards and called_tool_names and called_tool_names.issubset(NEWS_TOOL_NAMES):
-        labels = [NEWS_TOPIC_LABELS.get(name, name) for name in called_tool_names]
-        label_text = " and ".join(labels)
-        reply = f"Pulled {len(news_cards)} {label_text} — opening them now."
-        return {"reply": reply, "cards": news_cards}
 
-    # Ask for a short spoken-style reply — the articles themselves are
-    # shown as cards/windows, so the text reply shouldn't re-list them.
+def handle_message(user_message: str, history: list[dict] | None = None,
+                    session_id: str | None = None) -> dict:
+    """
+    Takes a user message (+ optional prior conversation history), runs the
+    tool-calling loop, and returns {"reply": str, "cards": list[dict]}.
+ 
+    This is a genuine multi-round agent loop, not a single lookup-then-answer
+    pass: after a tool runs, the model sees its result and gets to decide
+    whether it now has enough information to act (e.g. having just looked up
+    an event's ID, immediately call delete_my_event with it) or whether it's
+    ready to give a final answer. Without this, "cancel my meeting with
+    Sarah" could only ever look the event up and report its ID back to you
+    to paste — it could never chain the lookup into the actual cancellation
+    within the same turn.
+ 
+    "cards" is only populated when a news tool was called — it's the
+    structured article data (title/source/body/url per item) so a frontend
+    can render actual visual panels/windows instead of dumping headlines as
+    a wall of text. Callers that only want text (like telegram_bot.py) just
+    read result["reply"].
+ 
+    session_id groups related requests together on OpenRouter's side (e.g.
+    per browser tab / per Telegram chat) — pass the same value across a
+    conversation if you want that grouping; safe to omit entirely.
+    """
+    now_local = datetime.now(tz=ZoneInfo(settings.DEFAULT_TIMEZONE))
+    today = now_local.date()
+    date_context = (
+        f"Current date/time: {now_local.strftime('%A, %Y-%m-%d %H:%M')} ({settings.DEFAULT_TIMEZONE}).\n"
+        f"Pre-computed relative dates — use these exact values verbatim, do not recompute them yourself:\n"
+        f"  today = {today.isoformat()}\n"
+        f"  tomorrow = {(today + timedelta(days=1)).isoformat()}\n"
+        f"  yesterday = {(today - timedelta(days=1)).isoformat()}\n"
+        f"  day after tomorrow = {(today + timedelta(days=2)).isoformat()}\n"
+        f"For anything else relative ('next Friday', 'in 3 days'), compute it yourself "
+        f"from the current date above — never guess or default to a placeholder date."
+    )
+    messages = [
+        {"role": "system", "content": settings.SYSTEM_PROMPT},
+        {"role": "system", "content": date_context}
+    ]
+    if history:
+        messages.extend(history)
+    messages.append({"role": "user", "content": user_message})
+ 
+    news_cards: list[dict] = []
+    called_tool_names: set[str] = set()
+    message = None
+ 
+    for round_num in range(MAX_TOOL_ROUNDS):
+        data = _complete(messages, session_id=session_id, use_tools=True)
+        message = data.choices[0].message
+ 
+        tools_ran = _run_tool_round(message, messages, news_cards, called_tool_names)
+        if not tools_ran:
+            # Model gave a plain answer with nothing left to look up or do —
+            # this is the final reply, no more rounds needed.
+            return {"reply": message.content, "cards": news_cards}
+ 
+        # Fast path: a single round that was ENTIRELY news tools skips
+        # further model calls — the cards/windows speak for themselves, no
+        # narration round needed. Only applies on round 0 so it never
+        # short-circuits a lookup-then-action chain that happens to touch a
+        # news tool partway through.
+        if round_num == 0 and news_cards and called_tool_names.issubset(NEWS_TOOL_NAMES):
+            labels = [NEWS_TOPIC_LABELS.get(name, name) for name in called_tool_names]
+            label_text = " and ".join(labels)
+            return {"reply": f"Pulled {len(news_cards)} {label_text} — opening them now.", "cards": news_cards}
+ 
+    # Hit MAX_TOOL_ROUNDS without the model settling on a final answer —
+    # force one last plain completion so the person still gets a reply
+    # instead of the request silently dropping.
     if news_cards:
         messages.append(
             {
@@ -226,7 +255,6 @@ def handle_message(user_message: str, history: list[dict] | None = None,
                 "content": "The news results are being shown to the user as separate visual cards/windows. Give a brief one-sentence spoken acknowledgement only — do not list or summarize the individual headlines in text.",
             }
         )
-
     final_data = _complete(messages, session_id=session_id, use_tools=False)
     return {"reply": final_data.choices[0].message.content, "cards": news_cards}
 
