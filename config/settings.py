@@ -29,6 +29,9 @@ class Settings:
 
     #// Calendar API scopes
     "https://www.googleapis.com/auth/calendar.events",
+
+    #// YouTube API scopes
+    "https://www.googleapis.com/auth/youtube.readonly",
 ]
 
     # Gmail & calendar setup instructions: https://developers.google.com/gmail/api/quickstart/python

@@ -9,7 +9,7 @@ from config.settings import settings
 
 _creds = None
 
-def get_credentials():
+def get_credentials() -> Credentials:
     global _creds
     if _creds and _creds.valid:
         return _creds
@@ -32,3 +32,6 @@ def get_gmail_service():
 
 def get_calendar_service():
     return build("calendar", "v3", credentials=get_credentials())
+
+def get_youtube_service():
+    return build("youtube", "v3", credentials=get_credentials())
