@@ -124,15 +124,19 @@ class VideoWindow(QMainWindow):
         self.setWindowTitle(title)
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+
+        self._embed_url = embed_url
+        self._is_closing = False
         
         # Size: 16:9 aspect ratio
-        self.resize(854, 510)
+        win_w, win_h = 860, 520
+        self.resize(win_w, win_h)
         
         # Center on screen
         screen = QApplication.primaryScreen().availableGeometry()
         self.move(
-            (screen.width() - 854) // 2,
-            (screen.height() - 510) // 2
+            (screen.width() - win_w) // 2,
+            (screen.height() - win_h) // 2
         )
         
         # Central widget with border styling
@@ -141,8 +145,8 @@ class VideoWindow(QMainWindow):
         central.setStyleSheet("""
             #videoWindow {
                 background: #00060a;
-                border: 1px solid #00d4ff;
-                border-radius: 12px;
+                border: 1.5px solid #00d4ff;
+                border-radius: 14px;
             }
         """)
         self.setCentralWidget(central)
@@ -152,82 +156,167 @@ class VideoWindow(QMainWindow):
         layout.setSpacing(0)
         
         # Title bar
-        title_bar = self._create_title_bar(title)
-        layout.addWidget(title_bar)
+        self._title_bar = self._create_title_bar(title)
+        layout.addWidget(self._title_bar)
         
         # Video player - load from server endpoint
         self.view = QWebEngineView()
-        self.view.setStyleSheet("background: #000; border-radius: 0 0 12px 12px;")
+        self.view.setStyleSheet("background: #000; border-radius: 0 0 13px 13px;")
         
         # Build the URL for the server's video player endpoint
         encoded_url = quote(embed_url, safe='')
         video_player_url = f"{BACKEND_URL}/video-player?embed_url={encoded_url}&title={quote(title, safe='')}"
         
         self.view.load(QUrl(video_player_url))
+
+        # Set the page to stop media when window closes
+        page = self.view.page()
+        page.setBackgroundColor(Qt.GlobalColor.black)
+        page.settings().setAttribute(
+            QWebEngineSettings.WebAttribute.PlaybackRequiresUserGesture, False
+        )
+
         layout.addWidget(self.view)
         
         # Keep reference to prevent garbage collection
         _open_windows.append(self)
-        self.destroyed.connect(lambda: _open_windows.remove(self) if self in _open_windows else None)
+        app = QApplication.instance()
+        if app:
+            app.aboutToQuit.connect(self._cleanup_and_close)
     
     def _create_title_bar(self, title: str) -> QWidget:
-        """Create JARVIS-styled title bar."""
+        """Create JARVIS-styled draggable title bar."""
         bar = QWidget()
-        bar.setFixedHeight(38)
+        bar.setFixedHeight(42)
+        bar.setCursor(Qt.CursorShape.OpenHandCursor)  # Shows it's draggable
         bar.setStyleSheet("""
-            background: #000d14;
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #001420, stop:1 #000a14);
             border-bottom: 1px solid #1a5c7a;
-            border-radius: 12px 12px 0 0;
+            border-radius: 13px 13px 0 0;
         """)
         
         layout = QHBoxLayout(bar)
-        layout.setContentsMargins(14, 0, 8, 0)
-        layout.setSpacing(8)
+        layout.setContentsMargins(16, 0, 10, 0)
+        layout.setSpacing(10)
         
-        # Glowing dot
-        dot = QLabel("●")
-        dot.setFixedWidth(16)
-        dot.setStyleSheet("""
+        # JARVIS logo/icon
+        icon = QLabel("◈")
+        icon.setFixedWidth(20)
+        icon.setStyleSheet("""
             color: #00d4ff; 
-            font-size: 10px; 
+            font-size: 14px; 
             background: transparent;
+            font-weight: bold;
         """)
-        layout.addWidget(dot)
+        layout.addWidget(icon)
         
-        # Title text
-        title_label = QLabel(title[:50])
+        # Video title
+        display_title = title[:55] + "..." if len(title) > 55 else title
+        title_label = QLabel(display_title)
         title_label.setStyleSheet("""
             color: #00d4ff; 
             font-family: 'Courier New', monospace; 
             font-size: 10px; 
             font-weight: bold;
-            letter-spacing: 2px;
+            letter-spacing: 1.5px;
             background: transparent;
         """)
         layout.addWidget(title_label)
         layout.addStretch()
         
+        # Minimize button
+        min_btn = QPushButton("—")
+        min_btn.setFixedSize(28, 28)
+        min_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        min_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                color: #5f8fa3;
+                border: 1px solid #1a3f52;
+                border-radius: 14px;
+                font-size: 14px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background: rgba(0, 212, 255, 0.1);
+                border-color: #00d4ff;
+                color: #00d4ff;
+            }
+        """)
+        min_btn.clicked.connect(self.showMinimized)
+        layout.addWidget(min_btn)
+        
         # Close button
         close_btn = QPushButton("✕")
-        close_btn.setFixedSize(26, 26)
+        close_btn.setFixedSize(28, 28)
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         close_btn.setStyleSheet("""
             QPushButton {
                 background: transparent;
                 color: #ff3355;
-                border: 1px solid #ff3355;
-                border-radius: 13px;
+                border: 1px solid #5a1530;
+                border-radius: 14px;
                 font-size: 12px;
                 font-weight: bold;
             }
             QPushButton:hover {
                 background: rgba(255, 51, 85, 0.2);
+                border-color: #ff3355;
             }
         """)
-        close_btn.clicked.connect(self.close)
+        close_btn.clicked.connect(self._cleanup_and_close)
         layout.addWidget(close_btn)
         
+        # Make the title bar draggable
+        bar.mousePressEvent = self._title_bar_mouse_press
+        bar.mouseMoveEvent = self._title_bar_mouse_move
+        bar.mouseReleaseEvent = self._title_bar_mouse_release
+        
         return bar
+    def _title_bar_mouse_press(self, event):
+        """Start window drag."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_pos = event.globalPosition().toPoint()
+            self._title_bar.setCursor(Qt.CursorShape.ClosedHandCursor)
+    
+    def _title_bar_mouse_move(self, event):
+        """Move window during drag."""
+        if hasattr(self, '_drag_pos') and event.buttons() == Qt.MouseButton.LeftButton:
+            delta = event.globalPosition().toPoint() - self._drag_pos
+            self.move(self.pos() + delta)
+            self._drag_pos = event.globalPosition().toPoint()
+    
+    def _title_bar_mouse_release(self, event):
+        """End window drag."""
+        if hasattr(self, '_drag_pos'):
+            del self._drag_pos
+            self._title_bar.setCursor(Qt.CursorShape.OpenHandCursor)
+    
+    def _cleanup_and_close(self):
+        """Stop video playback and close the window properly."""
+        if self._is_closing:
+            return
+        self._is_closing = True
+        
+        # Stop video by loading a blank page
+        if hasattr(self, 'view'):
+            self.view.stop()
+            self.view.setHtml("<html><body></body></html>")
+            self.view.deleteLater()
+        
+        # Remove from tracking list
+        if self in _open_windows:
+            _open_windows.remove(self)
+        
+        # Close the window
+        self.close()
+        self.deleteLater()
+    
+    def closeEvent(self, event):
+        """Override close event to ensure cleanup."""
+        self._cleanup_and_close()
+        event.accept()
     
 class MainPage(QWebEnginePage):
     """Main HUD view page controller."""
