@@ -1,7 +1,5 @@
 (function(){
-  // ---------- Synthesized sound effects (Web Audio API, no audio files) ----------
-  // Everything here is generated on the fly with oscillators — no copyrighted
-  // movie audio, no asset files to ship, same philosophy as the SVG rings.
+  // ---------- Synthesized sound effects (Web Audio API) ----------
   const SFX = (function(){
     let ctx = null;
     let masterGain = null;
@@ -77,12 +75,6 @@
     };
   })();
 
-  // Autoplay policy: a browser tab won't let audio play until you've
-  // interacted with the page at least once. The boot chime still tries to
-  // play immediately (works right away in the PyQt desktop shell, and in a
-  // browser tab if audio was already unlocked earlier this session) — this
-  // listener is the fallback that unlocks it on your very first click if
-  // that initial attempt got silently blocked.
   document.addEventListener('pointerdown', function unlockAudioOnce(){
     SFX.unlock();
     document.removeEventListener('pointerdown', unlockAudioOnce);
@@ -132,7 +124,6 @@
   // ---------- Boot sequence ----------
   hud.classList.add('visible');
   
-  // Simulate loading percentage
   let loadPercent = 0;
   const loadingStates = [
     'INITIALIZING CORE SYSTEMS...',
@@ -147,7 +138,6 @@
     boot.classList.add('loading');
     SFX.bootUp();
     
-    // Update loading text
     const loadInterval = setInterval(() => {
       loadPercent += Math.random() * 30;
       if (loadPercent >= 100) {
@@ -174,7 +164,7 @@
     }, 2400);
   });
 
-  // ---------- Build the 64-bar reactive ring ----------
+  // ---------- Build reactive ring ----------
   const BAR_COUNT = 64;
   const bars = [];
   for(let i=0;i<BAR_COUNT;i++){
@@ -207,7 +197,7 @@
     speakBtn.classList.toggle('active', next === 'speaking');
   }
 
-  // ---------- Real microphone reactivity ----------
+  // ---------- Microphone reactivity ----------
   let audioCtx, analyser, dataArray, micStream, micRAF;
 
   async function startListening(){
@@ -265,7 +255,7 @@
     setMode('idle');
   }
 
-  // ---------- Speaking bar animation ----------
+  // ---------- Speaking animation ----------
   let speakInterval, speakTimeout;
   function playSpeakingAnimation(durationMs){
     stopListening();
@@ -297,7 +287,7 @@
     playSpeakingAnimation(4200);
   });
 
-  // ---------- Chat: talk to the FastAPI backend ----------
+  // ---------- Chat: talk to FastAPI ----------
   let conversationHistory = [];
   const sessionId = 'browser-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
@@ -310,20 +300,11 @@
     return el;
   }
 
-  // marked converts markdown -> HTML, DOMPurify strips anything unsafe
-  // before it touches innerHTML — the reply text ultimately comes from an
-  // LLM (and tool results it echoes), so it's treated as untrusted input,
-  // not just formatted for looks.
   function renderMarkdown(text){
     const rawHtml = marked.parse(text, { breaks: true });
     return DOMPurify.sanitize(rawHtml);
   }
 
-  // Types the raw text out character-by-character, THEN swaps to rendered
-  // markdown once complete. Rendering markdown incrementally mid-type would
-  // flash broken partial syntax (a lone "**" before its closing pair
-  // arrives) — typing the plain text first and rendering only at the end
-  // avoids that without needing a streaming-safe markdown parser.
   function typeAndRenderMessage(role, fullText){
     const el = document.createElement('div');
     el.className = 'msg ' + role;
@@ -341,6 +322,8 @@
         setTimeout(tick, perCharMs);
       }else{
         el.innerHTML = renderMarkdown(fullText);
+        // Intercept clicks on video or reel links inside assistant response text
+        attachMediaLinkHandlers(el);
         chatLog.scrollTop = chatLog.scrollHeight;
       }
     }
@@ -348,117 +331,251 @@
     return el;
   }
 
-  async function sendToJarvis(message){
-    SFX.send();
-    appendMessage('user', message);
-    chatInput.value = '';
-    chatInput.disabled = true;
-    chatSend.disabled = true;
-    const pending = appendMessage('assistant pending', 'thinking...');
+async function sendToJarvis(message){
+  SFX.send();
+  appendMessage('user', message);
+  chatInput.value = '';
+  chatInput.disabled = true;
+  chatSend.disabled = true;
+  const pending = appendMessage('assistant pending', 'thinking...');
 
-    try{
-      const res = await fetch('/chat', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ message, history: conversationHistory, session_id: sessionId })
-      });
-      if(!res.ok) throw new Error('Server error ' + res.status);
-      const data = await res.json();
+  try{
+    const res = await fetch('/chat', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ message, history: conversationHistory, session_id: sessionId })
+    });
+    if(!res.ok) throw new Error('Server error ' + res.status);
+    const data = await res.json();
 
-      pending.remove();
-      SFX.receive();
-      typeAndRenderMessage('assistant', data.reply);
-      conversationHistory = data.history;
+    pending.remove();
+    SFX.receive();
+    typeAndRenderMessage('assistant', data.reply);
+    conversationHistory = data.history;
 
-      const estimatedMs = Math.min(7000, Math.max(1200, data.reply.length * 55));
-      playSpeakingAnimation(estimatedMs);
+    const estimatedMs = Math.min(7000, Math.max(1200, data.reply.length * 55));
+    playSpeakingAnimation(estimatedMs);
 
-      if(data.cards && data.cards.length){
-        spawnNewsCards(data.cards);
-      }
-    }catch(err){
-      pending.remove();
-      appendMessage('assistant', 'Connection error — is the server running? (' + err.message + ')');
-    }finally{
-      chatInput.disabled = false;
-      chatSend.disabled = false;
-      chatInput.focus();
+    // Handle cards (both news and video)
+    if(data.cards && data.cards.length){
+      spawnNewsCards(data.cards);
     }
+  }catch(err){
+    pending.remove();
+    appendMessage('assistant', 'Connection error — is the server running? (' + err.message + ')');
+  }finally{
+    chatInput.disabled = false;
+    chatSend.disabled = false;
+    chatInput.focus();
+  }
+}
+
+  // ---------- In-Place Media & Reel Popup Player ----------
+
+  function playMediaInPopup(embedUrl, title) {
+  // Try to open as native video window first (PyQt will catch this)
+  if (typeof window.__TAURI__ === 'undefined') {
+    // We're in PyQt WebEngine — use console.log to signal the native window
+    const videoData = {
+      embed_url: embedUrl,
+      title: title || 'JARVIS Video Player'
+    };
+    console.log('JARVIS_OPEN_VIDEO:' + JSON.stringify(videoData));
+  } else {
+    // Fallback for regular browser: use the overlay
+    _playMediaInOverlay(embedUrl, title);
+  }
+}
+
+function _playMediaInOverlay(rawUrl, title = '') {
+  let embedUrl = rawUrl;
+
+  // Handle direct embed URLs (from video cards)
+  if (rawUrl.includes('youtube.com/embed/')) {
+    embedUrl = rawUrl; // Already an embed URL, use as-is
+  } else if (rawUrl.includes('youtube.com/watch?v=')) {
+    const videoId = rawUrl.split('v=')[1].split('&')[0];
+    embedUrl = `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&modestbranding=1`;
+  } else if (rawUrl.includes('youtu.be/')) {
+    const videoId = rawUrl.split('youtu.be/')[1].split('?')[0];
+    embedUrl = `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&modestbranding=1`;
+  } else if (rawUrl.includes('youtube.com/shorts/')) {
+    const videoId = rawUrl.split('shorts/')[1].split('?')[0];
+    embedUrl = `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&modestbranding=1`;
+  } else if (rawUrl.includes('instagram.com/reel/')) {
+    const reelId = rawUrl.split('/reel/')[1].split('/')[0];
+    embedUrl = `https://www.instagram.com/reel/${reelId}/embed`;
   }
 
-  // ---------- News cards ----------
+  let overlay = document.getElementById('jarvis-video-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'jarvis-video-overlay';
+    overlay.style.cssText = `
+      position: fixed; inset: 0; background: rgba(0, 5, 12, 0.85);
+      display: flex; justify-content: center; align-items: center;
+      z-index: 99999; backdrop-filter: blur(8px);
+    `;
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+    document.body.appendChild(overlay);
+  }
+
+  const titleBar = title ? `
+    <div style="position: absolute; top: 0; left: 0; right: 0; z-index: 10; 
+                background: rgba(0,13,20,0.9); border-bottom: 1px solid rgba(0,255,255,0.3);
+                padding: 8px 16px; display: flex; align-items: center; gap: 8px;">
+      <div style="width: 6px; height: 6px; background: #00d4ff; border-radius: 50%; 
+                  box-shadow: 0 0 8px #00d4ff;"></div>
+      <span style="font-family: 'Orbitron', sans-serif; font-size: 10px; letter-spacing: 0.15em; 
+                   color: #4fd6ff;">${title}</span>
+    </div>
+  ` : '';
+
+  overlay.innerHTML = `
+    <div style="position: relative; width: 85%; max-width: 840px; aspect-ratio: 16/9; 
+                border: 1px solid rgba(0,255,255,0.6); box-shadow: 0 0 35px rgba(0,255,255,0.4); 
+                border-radius: 12px; overflow: hidden; background: #000;">
+      ${titleBar}
+      <button onclick="document.getElementById('jarvis-video-overlay').remove()" 
+              style="position: absolute; top: ${title ? '36px' : '12px'}; right: 12px; z-index: 10; 
+                     background: rgba(255,50,50,0.8); color: #fff; border: none; padding: 6px 14px; 
+                     cursor: pointer; border-radius: 20px; font-family: 'Orbitron', sans-serif; 
+                     font-size: 10px; letter-spacing: 0.1em;">
+        ✕ CLOSE
+      </button>
+      <iframe src="${embedUrl}" width="100%" height="100%" frameborder="0" 
+              allow="autoplay; encrypted-media" allowfullscreen></iframe>
+    </div>
+  `;
+}
+
+  function attachMediaLinkHandlers(container) {
+    const links = container.querySelectorAll('a');
+    links.forEach(a => {
+      const href = a.getAttribute('href') || '';
+      if (/youtube\.com|youtu\.be|instagram\.com\/reel/i.test(href)) {
+        a.addEventListener('click', (e) => {
+          e.preventDefault();
+          playMediaInPopup(href);
+        });
+      }
+    });
+  }
+
+  // ---------- Direct OS Browser Window Launcher ----------
   const MAX_CARDS = 5;
 
-  function spawnNewsCards(cards){
-    const subset = cards.slice(0, MAX_CARDS);
-    subset.forEach((_, i)=> SFX.cardOpen(i * 0.08));
-    if(window.__TAURI__){
-      spawnNewsWindows(subset);
-    }else{
-      spawnNewsBrowserWindows(subset);
+// Add this function after the existing playMediaInPopup function:
+
+function spawnNewsCards(cards) {
+  console.log('[JARVIS] spawnNewsCards called with:', cards.length, 'cards');
+  
+  const subset = cards.slice(0, MAX_CARDS);
+  const videoCards = [];
+  const articleCards = [];
+  
+  subset.forEach(card => {
+    console.log('[JARVIS] Card type:', card.type, 'title:', card.title);
+    if (card.type === 'video') {
+      videoCards.push(card);
+    } else {
+      articleCards.push(card);
+    }
+  });
+  
+  console.log('[JARVIS] Video cards:', videoCards.length, 'Article cards:', articleCards.length);
+  
+  // Open video cards as native windows
+  videoCards.forEach((card, i) => {
+    SFX.cardOpen(i * 0.08);
+    const embedUrl = card.embed_url || card.url || '';
+    const title = card.title || 'JARVIS Video Player';
+    
+    console.log('[JARVIS] Opening video:', title, 'URL:', embedUrl);
+    
+    if (embedUrl) {
+      // Signal PyQt to open native video window
+      const videoData = {
+        embed_url: embedUrl,
+        title: title
+      };
+      console.log('JARVIS_OPEN_VIDEO:' + JSON.stringify(videoData));
+    }
+  });
+  
+  // Handle regular article cards
+  if (articleCards.length > 0) {
+    articleCards.forEach((_, i) => SFX.cardOpen(i * 0.08));
+    spawnNewsBrowserWindows(articleCards);
+  }
+}
+
+async function spawnNewsBrowserWindows(cards){
+  const blocked = [];
+  let successCount = 0;
+
+  // JARVIS Window Grid Dimensions
+  const winW = 600;
+  const winH = 450;
+  const screenW = window.screen.availWidth || 1920;
+  const screenH = window.screen.availHeight || 1080;
+  const cols = Math.floor(screenW / (winW + 20)) || 1;
+
+  for (let i = 0; i < cards.length; i++) {
+    const card = cards[i];
+    const targetUrl = card.url && /^https?:\/\//i.test(card.url) ? card.url : null;
+    if (!targetUrl) continue;
+
+    // Handle video links directly with popup overlay
+    if (/youtube\.com|youtu\.be|instagram\.com\/reel|twitter\.com|tiktok\.com/i.test(targetUrl)) {
+      playMediaInPopup(targetUrl);
+      SFX.cardOpen(i * 0.08);
+      continue;
+    }
+
+    // Calculate Grid Layout (Tile across the screen)
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    const left = 50 + (col * (winW + 20));
+    const top = 50 + (row * (winH + 20));
+
+    try {
+      const apiUrl = `/open-browser?url=${encodeURIComponent(targetUrl)}&width=${winW}&height=${winH}&left=${left}&top=${top}`;
+      const response = await fetch(apiUrl);
+      const result = await response.json();
+      
+      if (result.status === 'success') {
+        console.log(`✅ Opened structured window: ${targetUrl}`);
+        SFX.cardOpen(i * 0.08);
+        successCount++;
+      } else {
+        console.warn(`⚠️ Failed: ${targetUrl}`, result.message);
+        blocked.push(card);
+      }
+    } catch (error) {
+      console.error(`❌ Error opening ${targetUrl}:`, error);
+      blocked.push(card);
+    }
+    
+    if (i < cards.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, 200));
     }
   }
 
-  async function spawnNewsWindows(cards){
-    const { WebviewWindow } = window.__TAURI__.webviewWindow;
-    const { getCurrentWindow } = window.__TAURI__.window;
-    const main = getCurrentWindow();
-    const mainPos = await main.outerPosition();
-    const mainSize = await main.outerSize();
-
-    cards.forEach((card, i)=>{
-      const params = new URLSearchParams({
-        title: card.title, source: card.source, body: card.body, url: card.url, image: card.image, delay: i * 120
-      });
-      const x = mainPos.x + mainSize.width * 0.15 + i * 40 + (i % 2 === 0 ? -60 : 260);
-      const y = mainPos.y + 80 + i * 70;
-
-      new WebviewWindow(`news-${Date.now()}-${i}`, {
-        url: `/card?${params.toString()}`,
-        title: card.source || 'JARVIS',
-        width: 300, height: 200,
-        x, y,
-        decorations: false,
-        transparent: true,
-        resizable: true,
-        shadow: true,
-      });
-    });
+  if (successCount > 0) {
+    appendMessage('assistant', `✅ Structured and deployed ${successCount} window${successCount > 1 ? 's' : ''} to desktop.`);
   }
-
-  function spawnNewsBrowserWindows(cards){
-    const blocked = [];
-    const screenW = window.screen.availWidth || 1280;
-    const screenH = window.screen.availHeight || 800;
-    const winW = 340, winH = 260;
-
-    cards.forEach((card, i)=>{
-      const params = new URLSearchParams({
-        title: card.title, source: card.source, body: card.body, url: card.url, image: card.image, delay: i * 120
-      });
-      
-      const GAP = 20;
-      const columns = Math.floor(screenW / (winW + GAP));
-      const row = Math.floor(i / columns);
-      const col = i % columns;
-      const left = 40 + col * (winW + GAP);
-      const top = 40 + row * (winH + GAP);
-      
-      const features = `width=${winW},height=${winH},left=${left},top=${top},resizable=yes,scrollbars=no,status=no,toolbar=no,menubar=no,location=no`;
-      const w = window.open(`/card?${params.toString()}`, `jarvis-news-${Date.now()}-${i}`, features);
-      if(!w){ blocked.push(card); }
-    });
-
-    if(blocked.length){
-      appendBlockedLinks(blocked);
-    }
+  
+  if (blocked.length) {
+    appendBlockedLinks(blocked);
   }
+}
 
   function appendBlockedLinks(cards){
     const wrap = document.createElement('div');
     wrap.className = 'msg assistant';
     const note = document.createElement('div');
-    note.textContent = 'Your browser blocked some pop-up windows — open them directly:';
+    note.textContent = 'Pop-ups were blocked — open your articles here:';
     note.style.marginBottom = '6px';
     wrap.appendChild(note);
     cards.forEach(card=>{
@@ -468,7 +585,7 @@
       a.target = '_blank';
       a.rel = 'noopener';
       a.className = 'link-pill';
-      a.textContent = card.title;
+      a.textContent = card.title || 'Open Link';
       wrap.appendChild(a);
     });
     chatLog.appendChild(wrap);

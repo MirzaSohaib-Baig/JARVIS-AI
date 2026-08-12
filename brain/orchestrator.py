@@ -3,9 +3,6 @@ The orchestrator: sends the user's message to the LLM via the OpenAI SDK
 (pointed at OpenRouter's OpenAI-compatible endpoint), lets the model decide
 whether to call a tool (news, email, etc.), runs that tool, and feeds the
 result back for a final reply.
-
-This is the "brain" — as you add more tools (Home Assistant, Tasker, etc.)
-you just register them here, nothing else changes.
 """
 
 import json
@@ -25,10 +22,9 @@ client = OpenAI(
         "HTTP-Referer": settings.SITE_URL,
         "X-OpenRouter-Title": settings.SITE_NAME,
     }
-    )
+)
 
 # Combine every tool module's definitions + functions into one registry.
-# Add new tool modules here as you build them (calendar_tool, home_assistant_tool, etc.)
 TOOL_MODULES = [news, gmail_tool, calendar_tool, youtube_tool]
 ALL_TOOL_DEFINITIONS = [d for module in TOOL_MODULES for d in module.TOOL_DEFINITIONS]
 ALL_TOOL_FUNCTIONS = {}
@@ -43,12 +39,8 @@ NEWS_TOPIC_LABELS = {
     "search_world_news": "search results",
 }
 
-# Some free/open-weight models routed through OpenRouter don't reliably
-# support the native structured "tool_calls" field — instead they emit the
-# call as plain text inside the response content, e.g.:
-#   <tool_call><function=get_tech_news>{}</function></tool_call>
-# This regex catches that pattern so the orchestrator still works no matter
-# which model in the fallback chain actually serves a given request.
+YOUTUBE_TOOL_NAMES = set(youtube_tool.TOOL_FUNCTIONS.keys())
+
 TEXT_TOOL_CALL_RE = re.compile(
     r"<tool_call>\s*<function=([\w\-]+)>\s*(\{.*?\})?\s*</function>\s*</tool_call>",
     re.DOTALL,
@@ -56,8 +48,7 @@ TEXT_TOOL_CALL_RE = re.compile(
 
 
 def _parse_text_tool_calls(content: str) -> list[dict]:
-    """Extract {"name": ..., "arguments": {...}} dicts from the text-based
-    tool-call format described above. Returns [] if none are found."""
+    """Extract {"name": ..., "arguments": {...}} dicts from text-based tool-call format."""
     calls = []
     for name, raw_args in TEXT_TOOL_CALL_RE.findall(content or ""):
         try:
@@ -70,11 +61,7 @@ def _parse_text_tool_calls(content: str) -> list[dict]:
 
 def _complete(messages: list[dict], session_id: str | None = None,
               use_tools: bool = False):
-    """
-    Thin wrapper around client.chat.completions.create() that adds the
-    OpenRouter-specific fallback chain and session_id via extra_body (since
-    neither is a standard OpenAI API parameter).
-    """
+    """Thin wrapper around client.chat.completions.create()."""
     extra_body = {"models": settings.FALLBACK_MODELS}
     if session_id:
         extra_body["session_id"] = session_id
@@ -92,8 +79,7 @@ def _complete(messages: list[dict], session_id: str | None = None,
 
 
 def _normalize_news_item(tool_name: str, item: dict) -> dict:
-    """Different news tools return slightly different shapes — normalize to
-    one card schema the frontend can render consistently."""
+    """Normalize news items to consistent card schema."""
     if tool_name == "get_hacker_news_trends":
         return {
             "title": item.get("title") or "Untitled",
@@ -119,31 +105,113 @@ def _normalize_news_item(tool_name: str, item: dict) -> dict:
     }
 
 
-def _run_tool(func_name: str, func_args: dict, news_cards: list[dict]):
-    """Runs one tool call, appending to news_cards in place if it was a news
-    tool. Returns the (JSON-serializable) result, or an error string."""
+def _clean_youtube_for_model(tool_name: str, result) -> str:
+    """
+    Strip video IDs, embed URLs, and raw technical details from YouTube
+    results before the model sees them. The model gets clean, human-readable
+    text only — no 11-character IDs, no iframe URLs, no API internals.
+    """
+    if isinstance(result, list):
+        if not result:
+            return "No videos found."
+        
+        # Check if these are video cards (have "type": "video")
+        if len(result) > 0 and isinstance(result[0], dict) and result[0].get("type") == "video":
+            lines = []
+            for i, item in enumerate(result[:10]):
+                title = item.get("title", "Untitled")
+                channel = item.get("channel", "")
+                body = item.get("body", "")
+                
+                line = f"{i+1}. {title}"
+                if channel:
+                    line += f" — {channel}"
+                if body:
+                    line += f" ({body})"
+                lines.append(line)
+            return "\n".join(lines)
+        
+        return json.dumps(result, default=str)
+    
+    if isinstance(result, str):
+        return result
+    
+    if isinstance(result, dict):
+        if result.get("type") == "video":
+            title = result.get("title", "Untitled")
+            channel = result.get("channel", "")
+            return f"Video: {title}" + (f" by {channel}" if channel else "")
+        return json.dumps(result, default=str)
+    
+    return str(result)
+
+
+def _run_tool(func_name: str, func_args: dict, cards: list[dict]) -> tuple:
+    """
+    Runs one tool call. Returns (raw_result, cleaned_for_model).
+
+    - raw_result: the full, unmodified tool output
+    - cleaned_for_model: sanitized version the LLM sees (no video IDs/URLs)
+    
+    IMPORTANT: Video cards (type="video") are added directly to the `cards` list
+    so the frontend can open native video player windows.
+    """
     func = ALL_TOOL_FUNCTIONS.get(func_name)
     if func is None:
-        return f"Error: no such tool '{func_name}'"
+        error_msg = f"Error: no such tool '{func_name}'"
+        return error_msg, error_msg
+
     try:
         result = func(**func_args)
+
+        # ── News tools → collect into cards list ─────────────────────────
         if func_name in NEWS_TOOL_NAMES and isinstance(result, list):
-            news_cards.extend(_normalize_news_item(func_name, item) for item in result)
-        return result
+            for item in result:
+                cards.append(_normalize_news_item(func_name, item))
+            cleaned = f"Found {len(result)} results. They will be shown as cards."
+            return result, cleaned
+
+        # ── YouTube tools → add video cards directly to cards list ───────
+        if func_name in YOUTUBE_TOOL_NAMES:
+            if isinstance(result, list):
+                for item in result:
+                    if isinstance(item, dict) and item.get("type") == "video":
+                        # ADD VIDEO CARD TO CARDS LIST — this is what the frontend needs!
+                        cards.append(item)
+                cleaned = _clean_youtube_for_model(func_name, result)
+            elif isinstance(result, dict) and result.get("type") == "video":
+                # ADD SINGLE VIDEO CARD TO CARDS LIST
+                cards.append(result)
+                cleaned = _clean_youtube_for_model(func_name, result)
+            elif isinstance(result, str):
+                cleaned = result
+            else:
+                cleaned = _clean_youtube_for_model(func_name, result)
+            return result, cleaned
+
+        # ── All other tools → pass through as-is ─────────────────────────
+        cleaned = json.dumps(result, default=str) if not isinstance(result, str) else result
+        return result, cleaned
+
     except Exception as e:
         print(f"\n[JARVIS] Tool '{func_name}' failed:")
         traceback.print_exc()
         print()
-        return f"Error running {func_name}: {e}"
+        error_msg = f"Error running {func_name}: {e}"
+        return error_msg, error_msg
+
 
 MAX_TOOL_ROUNDS = 4
- 
-def _run_tool_round(message, messages: list[dict], news_cards: list[dict], called_tool_names: set[str]) -> bool:
+
+
+def _run_tool_round(message, messages: list[dict], cards: list[dict],
+                    called_tool_names: set[str]) -> bool:
     """
-    Executes every tool call in one model response (structured or the
-    text-based fallback format), appending results into `messages` in
-    place. Returns True if any tool was actually called this round, False
-    if the model gave a plain answer with nothing left to do.
+    Executes every tool call in one model response. YouTube results are
+    CLEANED before being sent back to the model — no video IDs or embed
+    URLs ever reach the LLM's context.
+    
+    Video cards are added to the `cards` list so the frontend receives them.
     """
     if message.tool_calls:
         messages.append(message)
@@ -151,55 +219,47 @@ def _run_tool_round(message, messages: list[dict], news_cards: list[dict], calle
             func_name = tool_call.function.name
             func_args = json.loads(tool_call.function.arguments or "{}")
             called_tool_names.add(func_name)
-            result = _run_tool(func_name, func_args, news_cards)
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "name": func_name,
-                    "content": json.dumps(result, default=str),
-                }
-            )
+
+            raw_result, cleaned = _run_tool(func_name, func_args, cards)
+
+            # Send CLEANED result to the model
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tool_call.id,
+                "name": func_name,
+                "content": cleaned,
+            })
         return True
- 
+
     text_calls = _parse_text_tool_calls(message.content or "")
     if text_calls:
         messages.append({"role": "assistant", "content": "Looking that up now."})
         result_lines = []
         for call in text_calls:
-            called_tool_names.add(call["name"])
-            result = _run_tool(call["name"], call["arguments"], news_cards)
-            result_lines.append(f"{call['name']} result: {json.dumps(result, default=str)}")
-        messages.append({"role": "system", "content": "Tool results:\n" + "\n".join(result_lines)})
+            func_name = call["name"]
+            called_tool_names.add(func_name)
+            _, cleaned = _run_tool(func_name, call["arguments"], cards)
+            result_lines.append(f"{func_name} result: {cleaned}")
+        messages.append({
+            "role": "system",
+            "content": "Tool results:\n" + "\n".join(result_lines)
+        })
         return True
- 
+
     return False
 
 
 def handle_message(user_message: str, history: list[dict] | None = None,
-                    session_id: str | None = None) -> dict:
+                   session_id: str | None = None) -> dict:
     """
     Takes a user message (+ optional prior conversation history), runs the
     tool-calling loop, and returns {"reply": str, "cards": list[dict]}.
- 
-    This is a genuine multi-round agent loop, not a single lookup-then-answer
-    pass: after a tool runs, the model sees its result and gets to decide
-    whether it now has enough information to act (e.g. having just looked up
-    an event's ID, immediately call delete_my_event with it) or whether it's
-    ready to give a final answer. Without this, "cancel my meeting with
-    Sarah" could only ever look the event up and report its ID back to you
-    to paste — it could never chain the lookup into the actual cancellation
-    within the same turn.
- 
-    "cards" is only populated when a news tool was called — it's the
-    structured article data (title/source/body/url per item) so a frontend
-    can render actual visual panels/windows instead of dumping headlines as
-    a wall of text. Callers that only want text (like telegram_bot.py) just
-    read result["reply"].
- 
-    session_id groups related requests together on OpenRouter's side (e.g.
-    per browser tab / per Telegram chat) — pass the same value across a
-    conversation if you want that grouping; safe to omit entirely.
+
+    KEY DESIGN:
+    - YouTube video IDs, embed URLs are NEVER exposed to the LLM
+    - The model sees only clean text like "1. Bohemian Rhapsody — Queen"
+    - Full video card data (with embed_url) is in `cards` for the frontend
+    - The frontend checks `card.type === "video"` to open native player windows
     """
     now_local = datetime.now(tz=ZoneInfo(settings.DEFAULT_TIMEZONE))
     today = now_local.date()
@@ -213,6 +273,7 @@ def handle_message(user_message: str, history: list[dict] | None = None,
         f"For anything else relative ('next Friday', 'in 3 days'), compute it yourself "
         f"from the current date above — never guess or default to a placeholder date."
     )
+
     messages = [
         {"role": "system", "content": settings.SYSTEM_PROMPT},
         {"role": "system", "content": date_context}
@@ -220,56 +281,60 @@ def handle_message(user_message: str, history: list[dict] | None = None,
     if history:
         messages.extend(history)
     messages.append({"role": "user", "content": user_message})
- 
-    news_cards: list[dict] = []
+
+    # Single cards list — holds BOTH news cards AND video cards
+    cards: list[dict] = []
     called_tool_names: set[str] = set()
     message = None
- 
+
     for round_num in range(MAX_TOOL_ROUNDS):
         data = _complete(messages, session_id=session_id, use_tools=True)
         message = data.choices[0].message
- 
-        tools_ran = _run_tool_round(message, messages, news_cards, called_tool_names)
+
+        tools_ran = _run_tool_round(message, messages, cards, called_tool_names)
         if not tools_ran:
-            # Model gave a plain answer with nothing left to look up or do —
-            # this is the final reply, no more rounds needed.
-            return {"reply": message.content, "cards": news_cards}
- 
-        # Fast path: a single round that was ENTIRELY news tools skips
-        # further model calls — the cards/windows speak for themselves, no
-        # narration round needed. Only applies on round 0 so it never
-        # short-circuits a lookup-then-action chain that happens to touch a
-        # news tool partway through.
-        if round_num == 0 and news_cards and called_tool_names.issubset(NEWS_TOOL_NAMES):
+            # Model gave a plain answer — final reply
+            return {"reply": message.content, "cards": cards}
+
+        # Fast path: first round, only news tools called
+        if round_num == 0 and cards and called_tool_names.issubset(NEWS_TOOL_NAMES):
             labels = [NEWS_TOPIC_LABELS.get(name, name) for name in called_tool_names]
             label_text = " and ".join(labels)
-            return {"reply": f"Pulled {len(news_cards)} {label_text} — opening them now.", "cards": news_cards}
- 
-    # Hit MAX_TOOL_ROUNDS without the model settling on a final answer —
-    # force one last plain completion so the person still gets a reply
-    # instead of the request silently dropping.
-    if news_cards:
-        messages.append(
-            {
-                "role": "system",
-                "content": "The news results are being shown to the user as separate visual cards/windows. Give a brief one-sentence spoken acknowledgement only — do not list or summarize the individual headlines in text.",
+            return {
+                "reply": f"Pulled {len(cards)} {label_text} — opening them now.",
+                "cards": cards,
             }
-        )
+
+    # Hit MAX_TOOL_ROUNDS — force final completion
+    if cards:
+        messages.append({
+            "role": "system",
+            "content": (
+                "The results are being shown to the user as separate visual "
+                "cards/windows. Give a brief one-sentence acknowledgement only — "
+                "do not list or summarize individual items in text."
+            ),
+        })
+
     final_data = _complete(messages, session_id=session_id, use_tools=False)
-    return {"reply": final_data.choices[0].message.content, "cards": news_cards}
+    return {"reply": final_data.choices[0].message.content, "cards": cards}
 
 
 if __name__ == "__main__":
-    # Quick command-line test, no Telegram or browser needed
     print("JARVIS (text mode). Ctrl+C to quit.\n")
     conversation: list[dict] = []
     while True:
         user_input = input("You: ")
         result = handle_message(user_input, conversation, session_id="cli-session")
         print(f"JARVIS: {result['reply']}\n")
-        if result["cards"]:
+        if result.get("cards"):
             for card in result["cards"]:
-                print(f"  [{card['source']}] {card['title']} -> {card['url']}")
+                card_type = card.get("type", "news")
+                if card_type == "video":
+                    print(f"  [▶ Video] {card['title']} — {card.get('channel', '')}")
+                    print(f"    embed_url: {card.get('embed_url', 'N/A')}")
+                else:
+                    print(f"  [{card.get('source', '?')}] {card['title']}")
             print()
         conversation.append({"role": "user", "content": user_input})
         conversation.append({"role": "assistant", "content": result["reply"]})
