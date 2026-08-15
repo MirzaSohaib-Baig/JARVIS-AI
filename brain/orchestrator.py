@@ -11,7 +11,7 @@ import traceback
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from openai import OpenAI
-from tools import news, gmail_tool, calendar_tool, youtube_tool
+from tools import news, gmail_tool, calendar_tool, youtube_tool, system_tool
 from config.settings import settings
 
 
@@ -25,7 +25,7 @@ client = OpenAI(
 )
 
 # Combine every tool module's definitions + functions into one registry.
-TOOL_MODULES = [news, gmail_tool, calendar_tool, youtube_tool]
+TOOL_MODULES = [news, gmail_tool, calendar_tool, youtube_tool, system_tool]
 ALL_TOOL_DEFINITIONS = [d for module in TOOL_MODULES for d in module.TOOL_DEFINITIONS]
 ALL_TOOL_FUNCTIONS = {}
 for module in TOOL_MODULES:
