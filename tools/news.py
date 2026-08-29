@@ -1,6 +1,3 @@
-"""
-News & tech trends tool using RSS, HackerNews, and DuckDuckGo Search (Keyless).
-"""
 import feedparser
 import requests
 from ddgs import DDGS
@@ -23,7 +20,7 @@ def _extract_image(entry) -> str:
     return ""
 
 
-def get_world_news(limit: int = 5) -> list[dict]:
+def get_world_news(limit: int = 4) -> list[dict]:
     feed = feedparser.parse(settings.RSS_FEEDS["world"])
     return [
         {
@@ -36,7 +33,7 @@ def get_world_news(limit: int = 5) -> list[dict]:
     ]
 
 
-def get_tech_news(limit: int = 5) -> list[dict]:
+def get_tech_news(limit: int = 4) -> list[dict]:
     feed = feedparser.parse(settings.RSS_FEEDS["tech"])
     return [
         {
@@ -49,7 +46,7 @@ def get_tech_news(limit: int = 5) -> list[dict]:
     ]
 
 
-def get_hacker_news_trends(limit: int = 5) -> list[dict]:
+def get_hacker_news_trends(limit: int = 4) -> list[dict]:
     ids = requests.get(settings.HN_TOP_STORIES_URL, timeout=10).json()[:limit]
     stories = []
     for story_id in ids:
@@ -64,7 +61,7 @@ def get_hacker_news_trends(limit: int = 5) -> list[dict]:
     return stories
 
 
-def search_world_news(query: str, limit: int = 6) -> list[dict]:
+def search_world_news(query: str, limit: int = 4) -> list[dict]:
     """
     Search world/tech news via DuckDuckGo (Keyless real-time news search).
     Replaces NewsAPI.

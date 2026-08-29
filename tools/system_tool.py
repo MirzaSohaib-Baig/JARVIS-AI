@@ -1,26 +1,3 @@
-"""
-System control & monitoring tool.
-
-CPU/RAM/disk stats use psutil — the standard cross-platform library for
-this, actively maintained, no reason to hand-roll it.
-
-GPU stats use nvidia-ml-py (NVIDIA's own official Python package —
-`pip install nvidia-ml-py`, then `import pynvml`, which is the correct,
-documented usage even though the pip package name changed). This is
-deliberately NOT hand-rolled ctypes bindings to nvml.dll — getting a
-struct layout or function signature wrong in raw ctypes is the kind of bug
-that segfaults or silently returns garbage rather than erroring cleanly,
-and NVIDIA already ships tested bindings for exactly this. Non-NVIDIA GPUs
-(AMD, Intel) report as unavailable rather than guessing — there's no
-vendor-neutral way to query them from Python.
-
-Camera opening launches the OS's actual camera app (what "open the camera"
-means here) — this is separate from AI vision (JARVIS looking through the
-webcam to describe what it sees), which is a different, bigger feature
-involving a vision-capable model call. Worth building later if wanted, not
-assumed here.
-"""
-
 import platform
 import subprocess
 

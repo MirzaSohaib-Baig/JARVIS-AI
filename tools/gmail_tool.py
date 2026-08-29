@@ -1,8 +1,3 @@
-"""
-Gmail tool. Requires a one-time OAuth setup — see README.md "Gmail & Calendar setup".
-First run will open a browser window asking you to log into your Google account.
-"""
-
 import base64
 from email.mime.text import MIMEText
 from auth.google_auth import get_gmail_service

@@ -1,20 +1,3 @@
-"""
-YouTube tool. Auth via auth/google_auth.py (shared with gmail/calendar) —
-uses the official YouTube Data API throughout, no HTML scraping. Scraping
-YouTube's pages (search results, trending, video metadata) is fragile —
-their page structure changes without notice, silently breaking regex-based
-extraction — and against YouTube's Terms of Service. The Data API already
-covers all of this officially, and you already have OAuth access to it.
-
-Videos never open themselves from in here. Every function just returns data
-shaped as a "video" card ({"type": "video", "embed_url": ...}) — opening the
-actual native popup window is native_ui.py's ContentWindowManager's job,
-same as every other tool in this project. A tool that tries to pop its own
-window (like the old webbrowser.open() version did) breaks that separation
-and, worse, opens your system's actual browser instead of a real native
-window — which is the opposite of what you're trying to build.
-"""
-
 from typing import Optional
 
 from auth.google_auth import get_youtube_service

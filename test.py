@@ -1,3 +1,3 @@
-import subprocess
+myfile = open("brain/myprompt.txt", "r").read()
 
-subprocess.run(["start", "opera", "--new-window", "https://www.google.com"], shell=True)  # or ['start', 'msedge', '--new-window', '{url}']
+print(myfile)

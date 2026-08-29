@@ -633,6 +633,66 @@ body {
   box-shadow: 0 0 22px rgba(255,157,77,.6);
 }
 
+.btn-red {
+  color: #ff4d4d;
+}
+
+.btn-red:hover {
+  border-color: #ff4d4d;
+  background: rgba(255, 77, 77, 0.1);
+}
+
+.btn-red.active {
+  background: #ff4d4d;
+  color: #00151d;
+  box-shadow: 0 0 22px rgba(255,77,77,.6);
+}
+
+.btn-green {
+  color: #00ff88;
+}
+
+.btn-green:hover {
+  border-color: #00ff88;
+  background: rgba(0, 255, 136, 0.1);
+}
+
+.btn-green.active {
+  background: #00ff88;
+  color: #00151d;
+  box-shadow: 0 0 22px rgba(0,255,136,.6);
+}
+
+.btn-purple {
+  color: #744dff;
+}
+
+.btn-purple:hover {
+  border-color: #744dff;
+  background: rgba(255, 77, 77, 0.1);
+}
+
+.btn-purple.active {
+  background: #744dff;
+  color: #00151d;
+  box-shadow: 0 0 22px rgba(77, 92, 255, 0.6);
+}
+
+.btn-yellow {
+  color: #ffea00;
+}
+
+.btn-yellow:hover {
+  border-color: #ffea00;
+  background: rgba(255, 234, 0, 0.1);
+}
+
+.btn-yellow.active {
+  background: #ffea00;
+  color: #00151d;
+  box-shadow: 0 0 22px rgba(255, 234, 0, 0.6);
+}
+
 /* ============ NEWS LAYER ============ */
 #news-layer {
   position: fixed;
