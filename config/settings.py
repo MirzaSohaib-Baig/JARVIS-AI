@@ -9,6 +9,7 @@ class Settings:
     # Required by OpenRouter
     OPENROUTER_API_KEY = getenv("LLM_API_KEY")
     MODEL = getenv("LLM_MODEL", "nvidia/nemotron-3-ultra-550b-a55b:free")
+    VISION_MODEL = getenv("VISION_MODEL", "google/gemini-2.0-flash-exp:free")
     BASE_URL = getenv("LLM_BASE_URL", "https://openrouter.ai/api/v1")
     # meta-llama/llama-3.3-70b-instruct:free tacked on as a third fallback — it's
     # the most established, longest-running free model on OpenRouter, so it's a

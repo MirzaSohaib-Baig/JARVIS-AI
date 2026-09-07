@@ -11,7 +11,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 from brain.orchestrator import handle_message
 from config.settings import settings
-from tools import news, work_matcher_tool  # Import your existing news tool
+from tools import cv_matcher_tool, news  # Import your existing news tool
 
 BRIEFINGS_DIR = Path(settings.BRIEFINGS_PATH) if hasattr(settings, 'BRIEFINGS_PATH') else Path(__file__).parent.parent / "data" / "briefings"
 BRIEFINGS_DIR.mkdir(parents=True, exist_ok=True)
@@ -33,7 +33,7 @@ class BackgroundTask:
     id: str
     type: TaskType
     query: str
-    interval_hours: int
+    interval_hours: float
     last_run: Optional[datetime] = None
     results: list = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.now)
@@ -66,17 +66,17 @@ class BackgroundTaskManager:
             {
                 "type": TaskType.TECH_WATCH,
                 "query": "emerging technologies and developer trends",
-                "interval_hours": 6,
+                "interval_hours": 0.5,
             },
             {
                 "type": TaskType.JOB_SEARCH,
                 "query": "remote software developer jobs high paying",
-                "interval_hours": 12,
+                "interval_hours": 0.5,
             },
             {
                 "type": TaskType.NEWS_DIGEST,
                 "query": "tech industry important developments",
-                "interval_hours": 4,
+                "interval_hours": 0.5,
             },
         ]
         
@@ -103,7 +103,7 @@ class BackgroundTaskManager:
             replace_existing=True,
         )
     
-    def create_task(self, task_type: TaskType, query: str, interval_hours: int = 6) -> BackgroundTask:
+    def create_task(self, task_type: TaskType, query: str, interval_hours: float = 0.5) -> BackgroundTask:
         """Create a new background task."""
         task_id = f"{task_type.value}_{int(time.time())}"
         task = BackgroundTask(
@@ -139,7 +139,7 @@ class BackgroundTaskManager:
         """Execute the actual work for a task using news tools + AI summary."""
 
         if task.type == TaskType.JOB_MATCHER:
-            jobs = work_matcher_tool.find_matching_jobs(limit=10)
+            jobs = cv_matcher_tool.find_matching_jobs(limit=10)
             return {
                 "query": task.query,
                 "jobs": jobs,
@@ -148,7 +148,7 @@ class BackgroundTaskManager:
             }
 
         if task.type == TaskType.FREELANCE:
-            opportunities = work_matcher_tool.find_freelance_opportunities(limit=10)
+            opportunities = cv_matcher_tool.find_freelance_opportunities(limit=10)
             return {
                 "query": task.query,
                 "jobs": jobs,

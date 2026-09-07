@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 import uvicorn
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 # from fastapi.middleware.cors import CORSMiddleware
 
@@ -17,7 +17,7 @@ from schema.backgroundTasksSchema import BackgroundTaskRequest
 from brain.orchestrator import handle_message
 from tools.background_tasks import get_background_manager, TaskType
 from config.browser_automation import browser_manager
-from tools.work_matcher_tool import upload_cv
+from tools.cv_matcher_tool import upload_cv
 
 app = FastAPI(title="JARVIS")
 

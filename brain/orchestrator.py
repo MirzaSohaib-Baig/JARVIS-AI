@@ -4,7 +4,7 @@ import traceback
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from openai import OpenAI
-from tools import news, gmail_tool, calendar_tool, youtube_tool, system_tool, work_matcher_tool
+from tools import cv_matcher_tool, news, gmail_tool, calendar_tool, youtube_tool, system_tool, computer_settings_tool, screen_processor_tool
 from config.settings import settings
 
 
@@ -18,7 +18,7 @@ client = OpenAI(
 )
 
 # Combine every tool module's definitions + functions into one registry.
-TOOL_MODULES = [news, gmail_tool, calendar_tool, youtube_tool, system_tool, work_matcher_tool]
+TOOL_MODULES = [news, gmail_tool, calendar_tool, youtube_tool, system_tool, cv_matcher_tool, computer_settings_tool, screen_processor_tool]
 ALL_TOOL_DEFINITIONS = [d for module in TOOL_MODULES for d in module.TOOL_DEFINITIONS]
 ALL_TOOL_FUNCTIONS = {}
 for module in TOOL_MODULES:
@@ -77,6 +77,7 @@ def _normalize_news_item(tool_name: str, item: dict) -> dict:
         return {
             "title": item.get("title") or "Untitled",
             "source": "Hacker News",
+            "content": item.get("content") or "",
             "body": f"{item.get('score', '?')} points",
             "url": item.get("url") or "",
             "image": item.get("image") or "",
@@ -85,6 +86,7 @@ def _normalize_news_item(tool_name: str, item: dict) -> dict:
         return {
             "title": item.get("title") or "Untitled",
             "source": "BBC Search",
+            "content": item.get("content") or "",
             "body": item.get("summary") or "",
             "url": item.get("link") or "",
             "image": item.get("image") or "",
@@ -92,6 +94,7 @@ def _normalize_news_item(tool_name: str, item: dict) -> dict:
     return {
         "title": item.get("title") or "Untitled",
         "source": "World" if tool_name == "get_world_news" else "Tech",
+        "content": item.get("content") or "",
         "body": item.get("summary") or "",
         "url": item.get("link") or "",
         "image": item.get("image") or "",
@@ -160,8 +163,18 @@ def _run_tool(func_name: str, func_args: dict, cards: list[dict]) -> tuple:
         # ── News tools → collect into cards list ─────────────────────────
         if func_name in NEWS_TOOL_NAMES and isinstance(result, list):
             for item in result:
-                cards.append(_normalize_news_item(func_name, item))
-            cleaned = f"Found {len(result)} results. They will be shown as cards."
+                card = _normalize_news_item(func_name, item)
+                cards.append(card)
+            # Build what the model actually reads — full article content, not just headlines
+            model_text = "\n\n".join(
+                f"[{c['source']}] {c['title']}\n{c['content']}"
+                for c in cards[-len(result):]
+                if c.get("content")
+            )
+            cleaned = (
+                f"Found {len(result)} results. Read this article content and summarise "
+                f"the key facts — do NOT just list headlines:\n\n{model_text}"
+            ) if model_text else f"Found {len(result)} results. They will be shown as cards."
             return result, cleaned
 
         # ── YouTube tools → add video cards directly to cards list ───────
@@ -291,12 +304,14 @@ def handle_message(user_message: str, history: list[dict] | None = None,
 
         # Fast path: first round, only news tools called
         if round_num == 0 and cards and called_tool_names.issubset(NEWS_TOOL_NAMES):
-            labels = [NEWS_TOPIC_LABELS.get(name, name) for name in called_tool_names]
-            label_text = " and ".join(labels)
-            return {
-                "reply": f"Pulled {len(cards)} {label_text} — opening them now.",
-                "cards": cards,
-            }
+            # labels = [NEWS_TOPIC_LABELS.get(name, name) for name in called_tool_names]
+            # label_text = " and ".join(labels)
+            # card_content = [card.get("content") for card in cards if card.get("content") is not None]
+            # return {
+            #     "reply": f"Here are the top {label_text}: {', '.join(card_content)}",
+            #     "cards": cards,
+            # }
+            pass
 
     # Hit MAX_TOOL_ROUNDS — force final completion
     if cards:

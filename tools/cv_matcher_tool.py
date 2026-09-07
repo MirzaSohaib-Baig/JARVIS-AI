@@ -202,7 +202,7 @@ class CVParser:
             r"(\d+)\+?\s*years?\s*(?:of)?\s*experience",
             text
         )
-        return int(match.group(1)) if match else 0
+        return int(match.group(1)) if match else 2
 
     def _get_role_title(self, text: str) -> str:
         """Extract role title from CV text."""

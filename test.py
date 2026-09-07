@@ -1,3 +1,5 @@
-myfile = open("brain/myprompt.txt", "r").read()
+from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 
-print(myfile)
+devices = AudioUtilities.GetSpeakers()
+
+print(devices)
